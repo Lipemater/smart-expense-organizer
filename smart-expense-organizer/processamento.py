@@ -221,45 +221,44 @@ def processar_arquivo_pdf(excel_path, extrato_pdf, entry_planilha, tabela_entrad
 
 
 
-def limpar_valor(valor):
-    try:
-        valor_limpo = re.sub(r'[^\d.,-]', '', valor).replace(',', '.').strip()
-        if valor_limpo:
-            return valor_limpo
-        else:
-            return '0'
-    except Exception as e:
-        print(f"Erro ao limpar valor: {valor} - {e}")
-        return '0'
-
 def ler_pdf(arquivo):
     try:
         with pdfplumber.open(arquivo) as pdf:
             entradas_paginas = []
             saidas_paginas = []
 
-            for numero_pagina, pagina in enumerate(pdf.pages):
-                tabela = pagina.extract_table()
-                if tabela:
-                    df = pd.DataFrame(tabela[1:], columns=tabela[0])
+            for _, pagina in enumerate(pdf.pages):
 
-                    # Limpeza de valores
-                    df['Valor'] = df['Valor'].apply(limpar_valor)
-                    df['Valor'] = pd.to_numeric(df['Valor'], errors='coerce')
+                # Pega o texto da pagina e cria uma lista a partir das linhas
+                texto = pagina.extract_text()
+                linhas = texto.split("\n")
+                
+                for linha in linhas:
+                    # procura valores no formato R$ 0,00
+                    match = re.search(r'([+-−]?)R\$\s?([\d.,]+)', linha)
+                    if not re.match(r'\d{2}:\d{2}', linha):
+                        continue
 
-                    # Renomeia a coluna "Descrição das Movimentações" para "Descrição" se existir
-                    if "Descrição das Movimentações" in df.columns:
-                        df.rename(columns={"Descrição das Movimentações": "Descrição"}, inplace=True)
+                    if match:
+                        sinal = match.group(1)
+                        valor = match.group(2)
 
-                    # Filtra valores positivos e negativos
-                    entrada_pagina = df[df['Valor'] >= 0][["Descrição", 'Valor']]
-                    saida_pagina = df[df['Valor'] < 0][["Descrição", 'Valor']]
+                        valor = valor.replace(".", "").replace(",", ".")
+                        valor = float(valor)
 
-                    entradas_paginas.append(entrada_pagina)
-                    saidas_paginas.append(saida_pagina)
+                        if sinal in ["-", "−"]:
+                            valor = -valor
+                        
+                        # remove o valor da descrição
+                        descricao = re.sub(r'([+-−]?)R\$\s?([\d\.,]+)', '', re.sub(r'\d{2}:\d{2}', '', linha)).strip()
 
-            entrada_consolidada = pd.concat(entradas_paginas, ignore_index=True) if entradas_paginas else pd.DataFrame()
-            saida_consolidada = pd.concat(saidas_paginas, ignore_index=True) if saidas_paginas else pd.DataFrame()
+                        if valor >= 0:
+                            entradas_paginas.append({"Descrição": descricao, "Valor": valor})
+                        else:
+                            saidas_paginas.append({"Descrição": descricao, "Valor": valor})
+
+            entrada_consolidada = pd.DataFrame(entradas_paginas)
+            saida_consolidada = pd.DataFrame(saidas_paginas)
             
             return entrada_consolidada, saida_consolidada
 
